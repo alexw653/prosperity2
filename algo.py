@@ -231,12 +231,23 @@ class Trader:
 
     def __get_avg_price(self, order_depth):
         # get average price from all buy and sell orders for a single OrderDepth object
-        (s_prices, b_prices) = (
-            order_depth.sell_orders.keys(), order_depth.buy_orders.keys())
-        return (sum(s_prices) + sum(b_prices)) / (len(s_prices) + len(b_prices))
+        tot_price = 0
+        tot_orders = 0
+        for (s_price, s_qty) in order_depth.sell_orders.items():
+            tot_price += s_price * abs(s_qty)
+            tot_orders += abs(s_qty)
+        for (b_price, b_qty) in order_depth.buy_orders.items():
+            tot_price += b_price * b_qty
+            tot_orders += b_qty
 
-    def __get_avg_price_market(self, market_trades):
-        print()
+        return 0 if tot_orders == 0 else (tot_price / tot_orders)
+
+    def __get_avg_price_market(self, market_trades, order_depth, symbol):
+        if symbol not in market_trades:
+            return 0
+        (market_prices, s_prices, b_prices) = (
+            [t.price for t in market_trades[symbol]], order_depth.sell_orders.keys(), order_depth.buy_orders.keys())
+        return (sum(market_prices) + sum(s_prices) + sum(b_prices)) / (len(market_prices) + len(s_prices) + len(b_prices))
 
     def run(self, state: TradingState):
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
@@ -256,7 +267,8 @@ class Trader:
             buy_qty = 0
 
             avg_price = self.__get_avg_price(order_depth)
-
+            # avg_price = self.__get_avg_price_market(state.market_trades, order_depth, product)
+            print('avg price:', avg_price)
             if product == "AMETHYSTS":
                 # go through outstanding buy orders, then sell it to the ones with the highest prices
                 for ask_price, quantity in sorted(order_depth.buy_orders.items(), reverse=True):
@@ -267,8 +279,7 @@ class Trader:
                         sell_qty += qty
                         orders.extend([Order("AMETHYSTS", ask_price, -1)
                                       for _ in range(qty)])
-
-                        apos -= qty
+                apos -= sell_qty
 
                 # go through all outstanding sell orders, and buy the best ones
                 # sell orders: { price : quantity }
@@ -279,13 +290,12 @@ class Trader:
                         buy_qty += qty
                         orders.extend([Order("AMETHYSTS", sell_price, 1)
                                       for _ in range(qty)])
-
-                        apos += qty
+                apos += buy_qty
 
                 result[product] = orders
 
             elif product == "STARFRUIT":
-                stddev = 0.5 * np.std([p[1] for p in data.lr_prices])
+                stddev = 0.4 * np.std([p[1] for p in data.lr_prices])
                 if data.round > 0:
                     prediction_below = data.lr.predict_one_std_below([data.round], stddev)[
                         0]
@@ -315,7 +325,7 @@ class Trader:
                         orders.extend([Order("STARFRUIT", sell_price, 1)
                                       for _ in range(qty)])
 
-                        apos += qty
+                apos += buy_qty
 
                 # go through outstanding buy orders, then sell it to the ones with the highest prices
                 for ask_price, quantity in sorted(order_depth.buy_orders.items(), reverse=True):
@@ -325,7 +335,7 @@ class Trader:
                         orders.extend([Order("STARFRUIT", ask_price, -1)
                                       for _ in range(qty)])
 
-                        apos -= qty
+                apos -= sell_qty
 
                 result[product] = orders
 
