@@ -23,13 +23,11 @@ for i in currencies:
             for l in currencies:
                 paths.append(['SeaShells', i, j, k, l, 'SeaShells'])
 
-# Calculate the return for each path
 results = []
 for path in paths:
     seashells_return, amts = calculate_seashells_return(1, path)
     results.append((path, seashells_return, amts))
 
-# Find the path with the maximum return
 max_value = float('-inf')
 max_return_path = None
 for val in results:
