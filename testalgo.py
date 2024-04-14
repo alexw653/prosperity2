@@ -231,18 +231,23 @@ class Trader:
 
     def __get_avg_price(self, order_depth):
         # get average price from all buy and sell orders for a single OrderDepth object
-        b_price = 0
-        s_price = 0
-        b_len = 0
-        s_len = 0
-        for bk, bv in order_depth.buy_orders.items():
-            b_price += bk*abs(bv)
-            b_len += abs(bv)
+        tot_price = 0
+        tot_orders = 0
+        for (s_price, s_qty) in order_depth.sell_orders.items():
+            tot_price += s_price * abs(s_qty)
+            tot_orders += abs(s_qty)
+        for (b_price, b_qty) in order_depth.buy_orders.items():
+            tot_price += b_price * b_qty
+            tot_orders += b_qty
 
-        for sk, sv in order_depth.sell_orders.items():
-            s_price += sk*abs(sv)
-            s_len += abs(sv)
-        return (b_price + s_price) / (b_len + s_len) 
+        return 0 if tot_orders == 0 else (tot_price / tot_orders)
+
+    def __get_avg_price_market(self, market_trades, order_depth, symbol):
+        if symbol not in market_trades:
+            return 0
+        (market_prices, s_prices, b_prices) = (
+            [t.price for t in market_trades[symbol]], order_depth.sell_orders.keys(), order_depth.buy_orders.keys())
+        return (sum(market_prices) + sum(s_prices) + sum(b_prices)) / (len(market_prices) + len(s_prices) + len(b_prices))
 
     def run(self, state: TradingState):
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
@@ -256,71 +261,65 @@ class Trader:
                 apos = state.position[product]
             else:
                 apos = 0
+            print(f"position for {product}: {apos}")
             orders: List[Order] = []
             sell_qty = 0
             buy_qty = 0
 
             avg_price = self.__get_avg_price(order_depth)
-
+            # avg_price = self.__get_avg_price_market(state.market_trades, order_depth, product)
+            print('avg price:', avg_price)
             if product == "AMETHYSTS":
-                # go through all outstanding sell orders, and buy the best ones
-                # sell orders: { price : quantity }
-                for sell_price, val in sorted(order_depth.sell_orders.items()):
-                    quantity = abs(val)
-                    if sell_price < 10000:
-                        qty = min(max(0, 20-(buy_qty+apos)), quantity)
-                        buy_qty += qty
-                        orders.extend([Order("AMETHYSTS", sell_price, 1)
-                                      for _ in range(qty)])
-
-                apos += buy_qty
-
                 # go through outstanding buy orders, then sell it to the ones with the highest prices
                 for ask_price, quantity in sorted(order_depth.buy_orders.items(), reverse=True):
-                    if ask_price > 10000:
+                    if ask_price > 10000 or (ask_price == 10000 and apos > 0):
                         # logger.print(sell_qty, apos, quantity)
                         qty = min(max(0, 20 -
                                       (sell_qty - apos)), quantity)
                         sell_qty += qty
                         orders.extend([Order("AMETHYSTS", ask_price, -1)
                                       for _ in range(qty)])
-
-                result[product] = orders
-
-                data.updateMean(avg_price)
-            elif product == "STARFRUIT":
-                stddev = np.std([p[1] for p in data.lr_prices])
-                if data.round > 0:
-                    prediction_below = data.lr.predict_one_std_below([data.round], stddev)[
-                        0]
-                    prediction_above = data.lr.predict_one_std_above([data.round], stddev)[
-                        0]
-                else:
-                    prediction_above = avg_price
-                    prediction_below = avg_price
-
-                logger.print(prediction_below, prediction_above)
-
-                # stop loss
-                # if apos > 0 and avg_price < prediction_below - 0.01 * stddev:
-                #     orders.append(Order("STARFRUIT", round(avg_price), -apos))
-                # elif apos < 0 and avg_price < prediction_above + 0.01 * stddev:
-                #     orders.append(Order("STARFRUIT", round(avg_price), -apos))
-
-                #apos = 0
+                apos -= sell_qty
 
                 # go through all outstanding sell orders, and buy the best ones
                 # sell orders: { price : quantity }
                 for sell_price, val in sorted(order_depth.sell_orders.items()):
                     quantity = abs(val)
-                    if sell_price <= prediction_below:
-                        # if data.ema != 0:
-                        #     percent_diff = abs(
-                        #         ((sell_price - data.ema) / (data.ema)) * 100)
-                        #     logger.print("old quantity:", quantity)
-                        #     # quantity = round(min(percent_diff, 0.004) / 0.004 * quantity)
-                        #     logger.print("new quantity:", quantity)
+                    if sell_price < 10000 or (sell_price == 10000 and apos < 0):
+                        qty = min(max(0, 20-(buy_qty+apos)), quantity)
+                        buy_qty += qty
+                        orders.extend([Order("AMETHYSTS", sell_price, 1)
+                                      for _ in range(qty)])
+                apos += buy_qty
 
+                result[product] = orders
+
+            elif product == "STARFRUIT":
+                stddev = 0.4 * np.std([p[1] for p in data.lr_prices])
+                if data.round > 0:
+                    prediction_below = data.lr.predict_one_std_below([data.round], stddev)[
+                        0]
+                    prediction_above = data.lr.predict_one_std_above([data.round], stddev)[
+                        0]
+                    prediction = data.lr.predictLR([data.round])[0]
+                else:
+                    prediction_above = avg_price
+                    prediction_below = avg_price
+                    prediction = avg_price
+
+                logger.print(prediction_below, prediction_above)
+
+                # stop loss
+                if apos > 0 and avg_price < prediction_below:# - 0.01 * stddev:
+                    orders.append(Order("STARFRUIT", round(avg_price), -apos))
+                elif apos < 0 and avg_price < prediction_above:#+ 0.01 * stddev:
+                    orders.append(Order("STARFRUIT", round(avg_price), -apos))
+
+                # go through all outstanding sell orders, and buy the best ones
+                # sell orders: { price : quantity }
+                for sell_price, val in sorted(order_depth.sell_orders.items()):
+                    quantity = abs(val)
+                    if sell_price <= prediction_below or (sell_price >= prediction_below and sell_price <= prediction and apos < 0):
                         qty = min(max(0, 20-(buy_qty+apos)), quantity)
                         buy_qty += qty
                         orders.extend([Order("STARFRUIT", sell_price, 1)
@@ -330,27 +329,18 @@ class Trader:
 
                 # go through outstanding buy orders, then sell it to the ones with the highest prices
                 for ask_price, quantity in sorted(order_depth.buy_orders.items(), reverse=True):
-                    if ask_price >= prediction_above:
-                        # if data.ema != 0:
-                        #     percent_diff = abs(
-                        #         ((sell_price - data.ema) / (data.ema)) * 100)
-                        #     # quantity = round(min(percent_diff, 0.004) / 0.004 * quantity)
-                        qty = min(max(0, 20 -
-                                      (sell_qty - apos)), quantity)
+                    if ask_price >= prediction_above or (ask_price <= prediction_above and ask_price >= prediction and apos > 0):
+                        qty = min(max(0, 20 - (sell_qty - apos)), quantity)
                         sell_qty += qty
                         orders.extend([Order("STARFRUIT", ask_price, -1)
                                       for _ in range(qty)])
-                # if sell_qty > 0:
-                #     orders.append(
-                #         Order("STARFRUIT", round(avg_price - 5), -1*sell_qty))
-                # if buy_qty > 0:
-                #     orders.append(Order("STARFRUIT", round(avg_price + 5), buy_qty))
+
+                apos -= sell_qty
+
                 result[product] = orders
 
                 data.updateEMA(avg_price)
                 data.updateLR(avg_price)
-                # logger.print("round:", data.round, "new mean:",
-                #       data.mean, "new ema:", data.ema)
                 logger.print("AVERAGE PRICE:", avg_price)
                 data.round += 1
 
