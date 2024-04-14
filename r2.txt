@@ -1,0 +1,7 @@
+Whenever the sunlight exposure is less than 7 hours a day production will decrease with 4% for every 10 minutes.
+
+Ideal humidity for orchids to grow is between 60% and 80% outside those limits production will fall with 2% for every 5% point of humidity change.
+
+You'll also need to weigh in shipping costs and in and Export tariffs.
+
+You'll have to pay .1 seashell per Orchid per time step.
